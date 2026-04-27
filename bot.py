@@ -217,6 +217,7 @@ def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
     active_players = [p for p in players if not p.get("IsSpectator")]
     spectators = [p for p in players if p.get("IsSpectator")]
     occupied_slots = count_occupied_slots(players)
+    max_slots = count_room_slots(players)
 
     name = clean(server.get("Name"), "Unnamed server")
     endpoint = f"{clean(server.get('IP'))}:{clean(server.get('Port'))}"
@@ -240,7 +241,7 @@ def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
     if description:
         embed.add_field(name="📝 Description", value=clip(description, 1024), inline=False)
     embed.add_field(
-        name=f"👥 Players ({occupied_slots}/12)",
+        name=f"👥 Players ({occupied_slots}/{max_slots})",
         value=clip(format_players(active_players, spectators), 1024),
         inline=False,
     )
@@ -321,6 +322,12 @@ def count_occupied_slots(players: Any) -> int:
     if not isinstance(players, list):
         return 0
     return len(players)
+
+
+def count_room_slots(players: Any) -> int:
+    if not isinstance(players, list):
+        return 12
+    return 14 if any(player.get("IsSpectator") for player in players if isinstance(player, dict)) else 12
 
 
 def player_type(player: Any) -> str:
