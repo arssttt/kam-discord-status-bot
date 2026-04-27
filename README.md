@@ -43,8 +43,10 @@ POLLER_TIMEOUT=6s
 UPDATE_INTERVAL=60
 ERROR_RETRY_INTERVAL=30
 BOT_ACTIVITY=KaM server status
+SHOW_PLAYER_FLAGS=true
+SHOW_PLAYER_COLORS=false
 ```
 
 If the poller exits with an error or returns invalid JSON, the bot updates the message with an error state and retries after `ERROR_RETRY_INTERVAL` seconds.
 
-The status message uses one header embed plus separate room embeds. Lobby rooms are sorted first and highlighted with a yellow embed accent; in-game rooms use a green accent. Each room shows server name with a display number, IP:port, game status, game time, optional description, lock icon, peacetime/speeds, map, teams, flags, player color markers, host marker, bot marker, and spectators. Bot players are shown as `AI` or `AdvAI`; closed slots are shown separately and count toward room occupancy, but not players online.
+The status message uses one header embed plus separate room embeds. Lobby rooms are sorted first and highlighted with a yellow embed accent; in-game rooms use a green accent. Each room shows server name with a display number, IP:port, game status, game time, optional description, lock icon, peacetime/speeds, map, teams, optional flags, optional player color markers, host marker, bot marker, and spectators. Bot players are shown as `AI` or `AdvAI`; closed slots are shown separately and count toward room occupancy, but not players online.

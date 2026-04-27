@@ -19,6 +19,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("kam-status-bot")
 
+EMBED_WIDTH_SPACER = "\u2800" * 42
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -33,6 +35,8 @@ class Settings:
     error_retry_interval: int
     message_file: Path
     activity: str
+    show_player_flags: bool
+    show_player_colors: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +54,8 @@ class Settings:
             error_retry_interval=int(os.getenv("ERROR_RETRY_INTERVAL", "30")),
             message_file=Path(os.getenv("STATUS_MESSAGE_FILE", "/app/data/status-message.json")),
             activity=os.getenv("BOT_ACTIVITY", "KaM server status"),
+            show_player_flags=parse_bool(os.getenv("SHOW_PLAYER_FLAGS", "true")),
+            show_player_colors=parse_bool(os.getenv("SHOW_PLAYER_COLORS", "false")),
         )
 
 
@@ -175,7 +181,7 @@ def status_title(game_revision: str) -> str:
     return f"🛡️ KaM Remake Status {game_revision}"
 
 
-def build_embeds(payload: dict[str, Any], game_revision: str) -> list[discord.Embed]:
+def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Embed]:
     summary = summarize(payload)
     rooms = sorted(payload.get("Rooms", []), key=room_sort_key)
     now = datetime.now(timezone.utc)
@@ -186,9 +192,10 @@ def build_embeds(payload: dict[str, Any], game_revision: str) -> list[discord.Em
     )
     if summary["locked_rooms"]:
         description += f" | 🔒 **{summary['locked_rooms']}** locked"
+    description = with_embed_width_spacer(description)
 
     header = discord.Embed(
-        title=status_title(game_revision),
+        title=status_title(settings.game_revision),
         description=description,
         color=discord.Color.from_rgb(76, 175, 123),
         timestamp=now,
@@ -201,7 +208,7 @@ def build_embeds(payload: dict[str, Any], game_revision: str) -> list[discord.Em
 
     embeds = [header]
     for index, room in enumerate(rooms[:9], start=1):
-        embeds.append(build_room_embed(room, index))
+        embeds.append(build_room_embed(room, index, settings))
 
     if len(rooms) > 9:
         header.add_field(name="➕ More rooms", value=f"And {len(rooms) - 9} more room(s).", inline=False)
@@ -209,7 +216,7 @@ def build_embeds(payload: dict[str, Any], game_revision: str) -> list[discord.Em
     return embeds
 
 
-def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
+def build_room_embed(room: dict[str, Any], index: int, settings: Settings) -> discord.Embed:
     server = room.get("Server", {})
     info = room.get("GameInfo", {})
     options = info.get("GameOptions", {})
@@ -231,7 +238,9 @@ def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
 
     embed = discord.Embed(
         title=clip(title, 256),
-        description=f"**{format_game_state(info.get('GameState'))}** | ⏱️ {clean(info.get('GameTime'))}",
+        description=with_embed_width_spacer(
+            f"**{format_game_state(info.get('GameState'))}** | ⏱️ {clean(info.get('GameTime'))}"
+        ),
         color=room_color(info.get("GameState")),
     )
     embed.add_field(name="🗺️ Map", value=clip(clean(info.get("Map")), 1024), inline=True)
@@ -242,10 +251,14 @@ def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
         embed.add_field(name="📝 Description", value=clip(description, 1024), inline=False)
     embed.add_field(
         name=f"👥 Players ({occupied_slots}/{max_slots})",
-        value=clip(format_players(active_players, spectators), 1024),
+        value=clip(format_players(active_players, spectators, settings), 1024),
         inline=False,
     )
     return embed
+
+
+def with_embed_width_spacer(text: str) -> str:
+    return f"{text}{EMBED_WIDTH_SPACER}"
 
 
 def status_dot(value: Any) -> str:
@@ -268,7 +281,11 @@ def room_color(value: Any) -> discord.Color:
     return discord.Color.from_rgb(120, 132, 140)
 
 
-def format_players(active_players: list[dict[str, Any]], spectators: list[dict[str, Any]]) -> str:
+def format_players(
+    active_players: list[dict[str, Any]],
+    spectators: list[dict[str, Any]],
+    settings: Settings,
+) -> str:
     closed_slots = [player for player in active_players if player_type(player) == "nptClosed"]
     playable_players = [player for player in active_players if player_type(player) != "nptClosed"]
 
@@ -278,7 +295,7 @@ def format_players(active_players: list[dict[str, Any]], spectators: list[dict[s
     teams: dict[int, list[str]] = {}
     for player in playable_players:
         team = int(player.get("Team") or 0)
-        teams.setdefault(team, []).append(format_player(player))
+        teams.setdefault(team, []).append(format_player(player, settings))
 
     team_ids = {team for team in teams if team > 0}
     show_teams = len(team_ids) > 1
@@ -289,7 +306,7 @@ def format_players(active_players: list[dict[str, Any]], spectators: list[dict[s
         chunks.append(f"{team_label} {', '.join(names[:8])}")
 
     if spectators:
-        names = [format_player(player) for player in spectators[:10]]
+        names = [format_player(player, settings) for player in spectators[:10]]
         chunks.append(f"👁️ **Spectators:** {', '.join(names)}")
 
     if closed_slots:
@@ -298,10 +315,15 @@ def format_players(active_players: list[dict[str, Any]], spectators: list[dict[s
     return "\n".join(chunks)
 
 
-def format_player(player: dict[str, Any]) -> str:
+def format_player(player: dict[str, Any], settings: Settings) -> str:
     player_type = clean(player.get("PlayerType"), "nptHuman")
     is_bot = player_type in {"nptComputerClassic", "nptComputerAdvanced"}
     name = player_type_label(player_type) if is_bot else clean(player.get("Name"), "Unknown")
+    prefix_parts = []
+    if settings.show_player_flags:
+        prefix_parts.append(lang_flag(player.get("LangCode")))
+    if settings.show_player_colors:
+        prefix_parts.append(color_square(player.get("Color")))
     markers = []
     if player.get("IsHost"):
         markers.append("👑")
@@ -309,7 +331,8 @@ def format_player(player: dict[str, Any]) -> str:
         markers.append("🤖 BOT")
 
     suffix = f" ({', '.join(markers)})" if markers else ""
-    return f"{lang_flag(player.get('LangCode'))} {color_square(player.get('Color'))} **{name}**{suffix}"
+    prefix = f"{' '.join(prefix_parts)} " if prefix_parts else ""
+    return f"{prefix}**{name}**{suffix}"
 
 
 def count_online_players(players: Any) -> int:
@@ -484,7 +507,7 @@ class StatusBot(discord.Client):
         embeds = (
             build_error_embeds(error, self.settings.error_retry_interval, self.settings.game_revision)
             if error is not None or payload is None
-            else build_embeds(payload, self.settings.game_revision)
+            else build_embeds(payload, self.settings)
         )
 
         message = await self.get_status_message(channel)
