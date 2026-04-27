@@ -2,6 +2,10 @@
 
 Discord bot that polls `server-poller-json-linux-amd64` and keeps one text-only status embed updated in a configured channel.
 
+## Preview
+
+![Discord status preview](assets/pic.png)
+
 ## Setup
 
 1. Create a Discord application and bot token in the Discord Developer Portal.
