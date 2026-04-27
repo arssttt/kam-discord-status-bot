@@ -133,7 +133,7 @@ def room_sort_key(room: dict[str, Any]) -> tuple[int, int, int]:
     info = room.get("GameInfo", {})
     server = room.get("Server", {})
     state = str(info.get("GameState") or "")
-    players = int(info.get("PlayerCount") or 0)
+    players = count_online_players(info.get("Players", []))
     ping = int(server.get("Ping") or 9999)
     lobby_rank = 0 if state == "mgsLobby" else 1
     return (lobby_rank, -players, ping)
@@ -146,7 +146,7 @@ def summarize(payload: dict[str, Any]) -> dict[str, int]:
     locked_rooms = 0
     for room in rooms:
         info = room.get("GameInfo", {})
-        players = int(info.get("PlayerCount") or 0)
+        players = count_online_players(info.get("Players", []))
         total_players += players
         if players > 0:
             playing_rooms += 1
@@ -216,6 +216,7 @@ def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
     players = info.get("Players", [])
     active_players = [p for p in players if not p.get("IsSpectator")]
     spectators = [p for p in players if p.get("IsSpectator")]
+    occupied_slots = count_occupied_slots(players)
 
     name = clean(server.get("Name"), "Unnamed server")
     endpoint = f"{clean(server.get('IP'))}:{clean(server.get('Port'))}"
@@ -239,7 +240,7 @@ def build_room_embed(room: dict[str, Any], index: int) -> discord.Embed:
     if description:
         embed.add_field(name="📝 Description", value=clip(description, 1024), inline=False)
     embed.add_field(
-        name=f"👥 Players ({len(active_players)}/{clean(info.get('PlayerCount'), str(len(players)))})",
+        name=f"👥 Players ({occupied_slots}/12)",
         value=clip(format_players(active_players, spectators), 1024),
         inline=False,
     )
@@ -267,11 +268,14 @@ def room_color(value: Any) -> discord.Color:
 
 
 def format_players(active_players: list[dict[str, Any]], spectators: list[dict[str, Any]]) -> str:
-    if not active_players and not spectators:
+    closed_slots = [player for player in active_players if player_type(player) == "nptClosed"]
+    playable_players = [player for player in active_players if player_type(player) != "nptClosed"]
+
+    if not playable_players and not spectators and not closed_slots:
         return "No players listed."
 
     teams: dict[int, list[str]] = {}
-    for player in active_players:
+    for player in playable_players:
         team = int(player.get("Team") or 0)
         teams.setdefault(team, []).append(format_player(player))
 
@@ -287,13 +291,16 @@ def format_players(active_players: list[dict[str, Any]], spectators: list[dict[s
         names = [format_player(player) for player in spectators[:10]]
         chunks.append(f"👁️ **Spectators:** {', '.join(names)}")
 
+    if closed_slots:
+        chunks.append(f"🔒 **Closed slots:** {len(closed_slots)}")
+
     return "\n".join(chunks)
 
 
 def format_player(player: dict[str, Any]) -> str:
     player_type = clean(player.get("PlayerType"), "nptHuman")
-    is_bot = player_type != "nptHuman"
-    name = player_type if is_bot else clean(player.get("Name"), "Unknown")
+    is_bot = player_type in {"nptComputerClassic", "nptComputerAdvanced"}
+    name = player_type_label(player_type) if is_bot else clean(player.get("Name"), "Unknown")
     markers = []
     if player.get("IsHost"):
         markers.append("👑")
@@ -302,6 +309,34 @@ def format_player(player: dict[str, Any]) -> str:
 
     suffix = f" ({', '.join(markers)})" if markers else ""
     return f"{lang_flag(player.get('LangCode'))} {color_square(player.get('Color'))} **{name}**{suffix}"
+
+
+def count_online_players(players: Any) -> int:
+    if not isinstance(players, list):
+        return 0
+    return sum(1 for player in players if player_type(player) != "nptClosed")
+
+
+def count_occupied_slots(players: Any) -> int:
+    if not isinstance(players, list):
+        return 0
+    return len(players)
+
+
+def player_type(player: Any) -> str:
+    if not isinstance(player, dict):
+        return "nptClosed"
+    return clean(player.get("PlayerType"), "nptHuman")
+
+
+def player_type_label(value: str) -> str:
+    labels = {
+        "nptHuman": "Human",
+        "nptClosed": "Closed",
+        "nptComputerClassic": "AI",
+        "nptComputerAdvanced": "AdvAI",
+    }
+    return labels.get(value, value)
 
 
 def team_badge(team: int) -> str:
