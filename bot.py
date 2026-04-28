@@ -207,8 +207,8 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
         return [header]
 
     embeds = [header]
-    for index, room in enumerate(rooms[:9], start=1):
-        embeds.append(build_room_embed(room, index, settings))
+    for room in rooms[:9]:
+        embeds.append(build_room_embed(room, settings))
 
     if len(rooms) > 9:
         header.add_field(name="➕ More rooms", value=f"And {len(rooms) - 9} more room(s).", inline=False)
@@ -216,7 +216,7 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
     return embeds
 
 
-def build_room_embed(room: dict[str, Any], index: int, settings: Settings) -> discord.Embed:
+def build_room_embed(room: dict[str, Any], settings: Settings) -> discord.Embed:
     server = room.get("Server", {})
     info = room.get("GameInfo", {})
     options = info.get("GameOptions", {})
@@ -227,9 +227,10 @@ def build_room_embed(room: dict[str, Any], index: int, settings: Settings) -> di
     max_slots = count_room_slots(players)
 
     name = clean(server.get("Name"), "Unnamed server")
+    room_id = clean(room.get("RoomID"))
     endpoint = f"{clean(server.get('IP'))}:{clean(server.get('Port'))}"
     lock = " 🔒" if info.get("PasswordLocked") else ""
-    title = f"{status_dot(info.get('GameState'))} {name}#{index}{lock} ({endpoint})"
+    title = f"{status_dot(info.get('GameState'))} {name}#{room_id}{lock} ({endpoint})"
     speeds = (
         f"{clean(options.get('Peacetime'))}pt "
         f"x{clean(options.get('SpeedPT'))} "
@@ -321,14 +322,12 @@ def format_player(player: dict[str, Any], settings: Settings) -> str:
     name = player_type_label(player_type) if is_bot else clean(player.get("Name"), "Unknown")
     prefix_parts = []
     if settings.show_player_flags:
-        prefix_parts.append(lang_flag(player.get("LangCode")))
+        prefix_parts.append("🤖" if is_bot else lang_flag(player.get("LangCode")))
     if settings.show_player_colors:
         prefix_parts.append(color_square(player.get("Color")))
     markers = []
     if player.get("IsHost"):
         markers.append("👑")
-    if is_bot:
-        markers.append("🤖 BOT")
 
     suffix = f" ({', '.join(markers)})" if markers else ""
     prefix = f"{' '.join(prefix_parts)} " if prefix_parts else ""
