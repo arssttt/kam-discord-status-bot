@@ -337,7 +337,13 @@ def format_player(player: dict[str, Any], settings: Settings) -> str:
 def count_online_players(players: Any) -> int:
     if not isinstance(players, list):
         return 0
-    return sum(1 for player in players if player_type(player) != "nptClosed")
+    return sum(1 for player in players if is_connected_human(player))
+
+
+def is_connected_human(player: Any) -> bool:
+    if not isinstance(player, dict):
+        return False
+    return player_type(player) == "nptHuman" and player.get("Connected") is True
 
 
 def count_occupied_slots(players: Any) -> int:
