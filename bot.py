@@ -138,7 +138,7 @@ def clean(value: Any, fallback: str = "-") -> str:
 def room_sort_key(room: dict[str, Any]) -> tuple[int, int, int]:
     info = room.get("GameInfo", {})
     server = room.get("Server", {})
-    state = str(info.get("GameState") or "")
+    state = effective_game_state(info)
     players = count_online_players(info.get("Players", []))
     ping = int(server.get("Ping") or 9999)
     lobby_rank = 0 if state == "mgsLobby" else 1
@@ -148,19 +148,24 @@ def room_sort_key(room: dict[str, Any]) -> tuple[int, int, int]:
 def summarize(payload: dict[str, Any]) -> dict[str, int]:
     rooms = payload.get("Rooms", [])
     total_players = 0
+    lobby_rooms = 0
     playing_rooms = 0
     locked_rooms = 0
     for room in rooms:
         info = room.get("GameInfo", {})
+        state = effective_game_state(info)
+        if state == "mgsLobby":
+            lobby_rooms += 1
         players = count_online_players(info.get("Players", []))
         total_players += players
-        if players > 0:
+        if state == "mgsGame" and players > 0:
             playing_rooms += 1
         if info.get("PasswordLocked"):
             locked_rooms += 1
     return {
         "rooms": len(rooms),
         "players": total_players,
+        "lobby_rooms": lobby_rooms,
         "playing_rooms": playing_rooms,
         "locked_rooms": locked_rooms,
     }
@@ -177,6 +182,37 @@ def format_game_state(value: Any) -> str:
     return states.get(str(value), clean(value, "Unknown"))
 
 
+def effective_game_state(info: dict[str, Any]) -> str:
+    state = str(info.get("GameState") or "")
+    if state == "mgsGame" and is_abandoned_game(info.get("Players", [])):
+        return "mgsGameOver"
+    return state
+
+
+def is_abandoned_game(players: Any) -> bool:
+    if not isinstance(players, list):
+        return False
+
+    active_players = [
+        player
+        for player in players
+        if isinstance(player, dict)
+        and not player.get("IsSpectator")
+        and player_type(player) == "nptHuman"
+    ]
+    spectators = [
+        player
+        for player in players
+        if isinstance(player, dict)
+        and player.get("IsSpectator")
+        and player_type(player) == "nptHuman"
+    ]
+
+    return bool(spectators) and bool(active_players) and all(
+        player.get("Connected") is False for player in active_players
+    )
+
+
 def status_title(game_revision: str) -> str:
     return f"🛡️ KaM Remake Status {game_revision}"
 
@@ -186,8 +222,12 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
     rooms = sorted(payload.get("Rooms", []), key=room_sort_key)
     now = datetime.now(timezone.utc)
 
+    room_count = f"🏰 **{summary['rooms']}** rooms"
+    if summary["lobby_rooms"]:
+        room_count += f" (**{summary['lobby_rooms']}** lobby)"
+
     description = (
-        f"👥 **{summary['players']}** players online | 🏰 **{summary['rooms']}** rooms | "
+        f"👥 **{summary['players']}** players online | {room_count} | "
         f"⚔️ **{summary['playing_rooms']}** active games"
     )
     if summary["locked_rooms"]:
@@ -197,7 +237,7 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
     header = discord.Embed(
         title=status_title(settings.game_revision),
         description=description,
-        color=discord.Color.from_rgb(76, 175, 123),
+        color=discord.Color.from_rgb(80, 140, 210),
         timestamp=now,
     )
     header.set_footer(text="Updates automatically")
@@ -230,7 +270,8 @@ def build_room_embed(room: dict[str, Any], settings: Settings) -> discord.Embed:
     room_id = clean(room.get("RoomID"))
     endpoint = f"{clean(server.get('IP'))}:{clean(server.get('Port'))}"
     lock = " 🔒" if info.get("PasswordLocked") else ""
-    title = f"{status_dot(info.get('GameState'))} {name}#{room_id}{lock} ({endpoint})"
+    state = effective_game_state(info)
+    title = f"{status_dot(state)} {name}#{room_id}{lock} ({endpoint})"
     speeds = (
         f"{clean(options.get('Peacetime'))}pt "
         f"x{clean(options.get('SpeedPT'))} "
@@ -240,9 +281,9 @@ def build_room_embed(room: dict[str, Any], settings: Settings) -> discord.Embed:
     embed = discord.Embed(
         title=clip(title, 256),
         description=with_embed_width_spacer(
-            f"**{format_game_state(info.get('GameState'))}** | ⏱️ {clean(info.get('GameTime'))}"
+            f"**{format_game_state(state)}** | ⏱️ {clean(info.get('GameTime'))}"
         ),
-        color=room_color(info.get("GameState")),
+        color=room_color(state),
     )
     embed.add_field(name="🗺️ Map", value=clip(clean(info.get("Map")), 1024), inline=True)
     embed.add_field(name="⚙️ Options", value=speeds, inline=True)
@@ -264,9 +305,9 @@ def with_embed_width_spacer(text: str) -> str:
 
 def status_dot(value: Any) -> str:
     if value == "mgsLobby":
-        return "🟡"
-    if value == "mgsGame":
         return "🟢"
+    if value == "mgsGame":
+        return "🟡"
     if value == "mgsGameOver":
         return "🔴"
     return "⚪"
@@ -274,9 +315,9 @@ def status_dot(value: Any) -> str:
 
 def room_color(value: Any) -> discord.Color:
     if value == "mgsLobby":
-        return discord.Color.from_rgb(229, 180, 84)
-    if value == "mgsGame":
         return discord.Color.from_rgb(92, 190, 112)
+    if value == "mgsGame":
+        return discord.Color.from_rgb(229, 180, 84)
     if value == "mgsGameOver":
         return discord.Color.from_rgb(214, 85, 70)
     return discord.Color.from_rgb(120, 132, 140)
