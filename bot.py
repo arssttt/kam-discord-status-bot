@@ -391,6 +391,7 @@ def lang_flag(lang_code: Any) -> str:
         "ces": "🇨🇿",
         "ukr": "🇺🇦",
         "bel": "🇧🇾",
+        "bul": "🇧🇬",
         "bra": "🇧🇷",
         "brz": "🇧🇷",
         "ptb": "🇧🇷",
@@ -404,8 +405,15 @@ def lang_flag(lang_code: Any) -> str:
         "hun": "🇭🇺",
         "dut": "🇳🇱",
         "nld": "🇳🇱",
+        "est": "🇪🇪",
+        "lit": "🇱🇹",
+        "nor": "🇳🇴",
+        "rom": "🇷🇴",
+        "srb": "🇷🇸",
+        "svk": "🇸🇰",
         "swe": "🇸🇪",
         "fin": "🇫🇮",
+        "vie": "🇻🇳",
     }
     return flags.get(str(lang_code).lower(), "🏳️")
 
