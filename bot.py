@@ -320,6 +320,9 @@ def format_player(player: dict[str, Any], settings: Settings) -> str:
     player_type = clean(player.get("PlayerType"), "nptHuman")
     is_bot = player_type in {"nptComputerClassic", "nptComputerAdvanced"}
     name = player_type_label(player_type) if is_bot else clean(player.get("Name"), "Unknown")
+    formatted_name = f"**{name}**"
+    if player.get("Connected") is False:
+        formatted_name = f"~~{formatted_name}~~"
     prefix_parts = []
     if settings.show_player_flags:
         prefix_parts.append("🤖" if is_bot else lang_flag(player.get("LangCode")))
@@ -331,7 +334,7 @@ def format_player(player: dict[str, Any], settings: Settings) -> str:
 
     suffix = f" ({', '.join(markers)})" if markers else ""
     prefix = f"{' '.join(prefix_parts)} " if prefix_parts else ""
-    return f"{prefix}**{name}**{suffix}"
+    return f"{prefix}{formatted_name}{suffix}"
 
 
 def count_online_players(players: Any) -> int:
