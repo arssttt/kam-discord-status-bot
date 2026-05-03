@@ -193,6 +193,13 @@ def format_game_state(value: Any) -> str:
     return states.get(str(value), clean(value, "Unknown"))
 
 
+def format_mission_difficulty(value: Any) -> str:
+    difficulty = clean(value, "")
+    if not difficulty or difficulty == "mdNone":
+        return ""
+    return difficulty[2:] if difficulty.startswith("md") else difficulty
+
+
 def effective_game_state(info: dict[str, Any]) -> str:
     state = str(info.get("GameState") or "")
     if state == "mgsGame" and is_abandoned_game(info.get("Players", [])):
@@ -364,6 +371,9 @@ def build_room_embed(room: dict[str, Any], settings: Settings) -> discord.Embed:
         f"x{clean(options.get('SpeedPT'))} "
         f"x{clean(options.get('SpeedAfterPT'))}"
     )
+    difficulty = format_mission_difficulty(options.get("MissionDifficulty"))
+    if difficulty:
+        speeds = f"{speeds} | {difficulty}"
 
     embed = discord.Embed(
         title=clip(title, 256),
