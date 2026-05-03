@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,8 @@ logging.basicConfig(
 logger = logging.getLogger("kam-status-bot")
 
 EMBED_WIDTH_SPACER = "\u2800" * 42
+SERVER_COLOR_TAG_RE = re.compile(r"\[\$[0-9a-fA-F]{6}\]")
+DISCORD_MARKDOWN_RE = re.compile(r"[\\*_~`|]")
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,8 @@ class Settings:
     master_url: str
     include_empty_rooms: bool
     poller_timeout: str
+    master_timeout: str
+    server_cache: str
     update_interval: int
     error_retry_interval: int
     message_file: Path
@@ -50,6 +55,8 @@ class Settings:
             master_url=os.getenv("MASTER_URL", "http://master.kamremake.com/"),
             include_empty_rooms=parse_bool(os.getenv("INCLUDE_EMPTY_ROOMS", "false")),
             poller_timeout=os.getenv("POLLER_TIMEOUT", "6s"),
+            master_timeout=os.getenv("MASTER_TIMEOUT", "2s"),
+            server_cache=os.getenv("SERVER_CACHE", "/app/data/servers-cache.json"),
             update_interval=int(os.getenv("UPDATE_INTERVAL", "60")),
             error_retry_interval=int(os.getenv("ERROR_RETRY_INTERVAL", "30")),
             message_file=Path(os.getenv("STATUS_MESSAGE_FILE", "/app/data/status-message.json")),
@@ -79,6 +86,10 @@ def poller_command(settings: Settings) -> list[str]:
         settings.master_url,
         "-timeout",
         settings.poller_timeout,
+        "-masterTimeout",
+        settings.master_timeout,
+        "-serverCache",
+        settings.server_cache,
     ]
     if settings.include_empty_rooms:
         command.append("-includeEmptyRooms")
@@ -234,13 +245,30 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
         description += f" | 🔒 **{summary['locked_rooms']}** locked"
     description = with_embed_width_spacer(description)
 
+    poller_warning = poller_status_warning(payload)
+    header_color = (
+        discord.Color.from_rgb(214, 85, 70)
+        if payload_error(payload)
+        else discord.Color.from_rgb(80, 140, 210)
+    )
+    if payload_from_cache(payload) and not payload_error(payload):
+        header_color = discord.Color.from_rgb(229, 180, 84)
+
     header = discord.Embed(
         title=status_title(settings.game_revision),
         description=description,
-        color=discord.Color.from_rgb(80, 140, 210),
+        color=header_color,
         timestamp=now,
     )
     header.set_footer(text="Updates automatically")
+    if poller_warning:
+        header.add_field(name="⚠️ Poller status", value=clip(poller_warning, 1024), inline=False)
+    if payload_from_cache(payload):
+        header.add_field(
+            name="📜 Cached servers",
+            value=clip(format_cached_servers(settings.server_cache), 1024),
+            inline=False,
+        )
 
     if not rooms:
         header.add_field(name="🏰 Rooms", value="No public rooms right now.", inline=False)
@@ -254,6 +282,65 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
         header.add_field(name="➕ More rooms", value=f"And {len(rooms) - 9} more room(s).", inline=False)
 
     return embeds
+
+
+def payload_from_cache(payload: dict[str, Any]) -> bool:
+    return payload.get("fromcache") is True
+
+
+def payload_error(payload: dict[str, Any]) -> str:
+    return clean(payload.get("error"), "")
+
+
+def poller_status_warning(payload: dict[str, Any]) -> str:
+    lines = []
+    if payload_from_cache(payload):
+        lines.append("Server list was loaded from cache.")
+    error = payload_error(payload)
+    if error:
+        lines.append(f"Poller error: {error}")
+    return "\n".join(lines)
+
+
+def format_cached_servers(cache_path: str) -> str:
+    servers = read_cached_servers(Path(cache_path))
+    if not servers:
+        return "No cached servers listed."
+    return "\n".join(servers)
+
+
+def read_cached_servers(cache_path: Path) -> list[str]:
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        logger.warning("Server cache file %s was not found", cache_path)
+        return []
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Cannot read server cache file %s: %s", cache_path, exc)
+        return []
+
+    servers = payload.get("servers") if isinstance(payload, dict) else None
+    if not isinstance(servers, list):
+        logger.warning("Server cache file %s does not contain a servers list", cache_path)
+        return []
+
+    formatted = []
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        name = clean_server_name(server.get("Name"))
+        ip = clean(server.get("IP"), "")
+        port = clean(server.get("Port"), "")
+        if not ip or not port:
+            continue
+        formatted.append(f"{name} {ip}:{port}")
+    return formatted
+
+
+def clean_server_name(value: Any) -> str:
+    name = SERVER_COLOR_TAG_RE.sub("", clean(value, "Unnamed server"))
+    name = DISCORD_MARKDOWN_RE.sub("", name)
+    return clean(" ".join(name.split()), "Unnamed server")
 
 
 def build_room_embed(room: dict[str, Any], settings: Settings) -> discord.Embed:
