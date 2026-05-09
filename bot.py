@@ -634,7 +634,39 @@ class StatusBot(discord.Client):
         self.status_message: discord.Message | None = None
 
     async def setup_hook(self) -> None:
-        self.loop.create_task(self.status_loop())
+        self.loop.set_exception_handler(self.handle_loop_exception)
+        self.create_fatal_task(self.status_loop(), name="status-loop")
+
+    def create_fatal_task(self, coro: Any, name: str) -> asyncio.Task[Any]:
+        task = self.loop.create_task(coro, name=name)
+        task.add_done_callback(self.handle_fatal_task_done)
+        return task
+
+    def handle_fatal_task_done(self, task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+
+        exc = task.exception()
+        if exc is None:
+            self.exit_fatally("Background task %s stopped unexpectedly", task.get_name())
+        else:
+            self.exit_fatally("Background task %s failed; exiting", task.get_name(), exc_info=exc)
+
+    def handle_loop_exception(self, loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exc = context.get("exception")
+        message = context.get("message", "Unhandled event loop exception")
+        if isinstance(exc, BaseException):
+            self.exit_fatally("%s; exiting", message, exc_info=exc)
+        else:
+            self.exit_fatally("%s; exiting: %s", message, context)
+
+    async def on_error(self, event_method: str, *args: Any, **kwargs: Any) -> None:
+        self.exit_fatally("Discord event handler %s failed; exiting", event_method, exc_info=True)
+
+    def exit_fatally(self, message: str, *args: Any, exc_info: Any = None) -> None:
+        logger.critical(message, *args, exc_info=exc_info)
+        logging.shutdown()
+        os._exit(1)
 
     async def on_ready(self) -> None:
         logger.info("Logged in as %s", self.user)
@@ -650,11 +682,17 @@ class StatusBot(discord.Client):
             except Exception as exc:
                 logger.exception("Status update failed")
                 delay = self.settings.error_retry_interval
-                await self.publish_status(payload=None, error=exc)
+                try:
+                    await self.publish_status(payload=None, error=exc)
+                except Exception:
+                    logger.exception("Could not publish status error")
+                    raise
             await asyncio.sleep(delay)
 
     async def publish_status(self, payload: dict[str, Any] | None, error: Exception | None) -> None:
-        channel = await self.fetch_channel(self.settings.channel_id)
+        channel = self.get_channel(self.settings.channel_id)
+        if channel is None:
+            channel = await self.fetch_channel(self.settings.channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             raise RuntimeError(f"Channel {self.settings.channel_id} cannot receive messages")
 
