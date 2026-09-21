@@ -37,6 +37,7 @@ Optional environment variables:
 
 ```env
 GAME_REVISION=r16020
+PROTOCOL_REVISION=r16000
 MASTER_URL=http://master.kamremake.com/
 INCLUDE_EMPTY_ROOMS=false
 POLLER_TIMEOUT=6s

@@ -31,6 +31,7 @@ class Settings:
     channel_id: int
     poller_path: str
     game_revision: str
+    protocol_revision: str
     master_url: str
     include_empty_rooms: bool
     poller_timeout: str
@@ -52,6 +53,7 @@ class Settings:
             channel_id=channel_id,
             poller_path=os.getenv("POLLER_PATH", "./server-poller-json-linux-amd64"),
             game_revision=os.getenv("GAME_REVISION", "r16020"),
+            protocol_revision=os.getenv("PROTOCOL_REVISION", "r16000"),
             master_url=os.getenv("MASTER_URL", "http://master.kamremake.com/"),
             include_empty_rooms=parse_bool(os.getenv("INCLUDE_EMPTY_ROOMS", "false")),
             poller_timeout=os.getenv("POLLER_TIMEOUT", "6s"),
@@ -82,6 +84,8 @@ def poller_command(settings: Settings) -> list[str]:
         settings.poller_path,
         "-gameRevision",
         settings.game_revision,
+        "-protocolRevision",
+        settings.protocol_revision,
         "-master",
         settings.master_url,
         "-timeout",
