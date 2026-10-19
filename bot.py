@@ -286,13 +286,22 @@ def build_embeds(payload: dict[str, Any], settings: Settings) -> list[discord.Em
         return [header]
 
     embeds = [header]
-    for room in rooms[:9]:
+    for room in rooms:
         embeds.append(build_room_embed(room, settings))
 
-    if len(rooms) > 9:
-        header.add_field(name="➕ More rooms", value=f"And {len(rooms) - 9} more room(s).", inline=False)
-
     return embeds
+
+
+def split_embeds(embeds: list[discord.Embed]) -> list[list[discord.Embed]]:
+    pages: list[list[discord.Embed]] = []
+    size = 0
+    for embed in embeds:
+        if not pages or len(pages[-1]) == 10 or size + len(embed) > 6000:
+            pages.append([])
+            size = 0
+        pages[-1].append(embed)
+        size += len(embed)
+    return pages
 
 
 def payload_from_cache(payload: dict[str, Any]) -> bool:
@@ -610,24 +619,28 @@ def build_error_embeds(error: Exception, retry_seconds: int, game_revision: str)
 def clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    return text[: limit - 1] + "..."
+    return text[: limit - 3] + "..."
 
 
-def read_message_id(path: Path) -> int | None:
+def read_message_ids(path: Path) -> list[int]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        message_id = data.get("message_id")
-        return int(message_id) if message_id else None
+        message_ids = data.get("message_ids")
+        if message_ids is None:
+            message_ids = [data["message_id"]] if data.get("message_id") else []
+        return [int(message_id) for message_id in message_ids]
     except FileNotFoundError:
-        return None
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return []
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
         logger.warning("Cannot read status message file %s: %s", path, exc)
-        return None
+        return []
 
 
-def write_message_id(path: Path, message_id: int) -> None:
+def write_message_ids(path: Path, message_ids: list[int]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"message_id": message_id}, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"message_ids": message_ids}, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 class StatusBot(discord.Client):
@@ -635,7 +648,7 @@ class StatusBot(discord.Client):
         intents = discord.Intents.default()
         super().__init__(intents=intents)
         self.settings = settings
-        self.status_message: discord.Message | None = None
+        self.status_messages: list[discord.Message] | None = None
 
     async def setup_hook(self) -> None:
         self.loop.set_exception_handler(self.handle_loop_exception)
@@ -706,33 +719,43 @@ class StatusBot(discord.Client):
             else build_embeds(payload, self.settings)
         )
 
-        message = await self.get_status_message(channel)
-        if message is None:
-            message = await channel.send(embeds=embeds)
-            self.status_message = message
-            write_message_id(self.settings.message_file, message.id)
-            logger.info("Created status message %s", message.id)
-            return
+        pages = split_embeds(embeds)
+        messages = await self.get_status_messages(channel)
+        for index, page in enumerate(pages):
+            while index < len(messages):
+                try:
+                    await messages[index].edit(embeds=page, attachments=[])
+                    break
+                except discord.NotFound:
+                    messages.pop(index)
+                    write_message_ids(self.settings.message_file, [m.id for m in messages])
+            else:
+                message = await channel.send(embeds=page)
+                messages.append(message)
+                write_message_ids(self.settings.message_file, [m.id for m in messages])
+                logger.info("Created status message %s", message.id)
 
-        await message.edit(embeds=embeds, attachments=[])
-        self.status_message = message
+        while len(messages) > len(pages):
+            try:
+                await messages[-1].delete()
+            except discord.NotFound:
+                pass
+            messages.pop()
+            write_message_ids(self.settings.message_file, [m.id for m in messages])
 
-    async def get_status_message(
+    async def get_status_messages(
         self,
         channel: discord.abc.Messageable,
-    ) -> discord.Message | None:
-        if self.status_message is not None:
-            return self.status_message
-
-        message_id = read_message_id(self.settings.message_file)
-        if message_id is None:
-            return None
-
-        try:
-            return await channel.fetch_message(message_id)
-        except discord.NotFound:
-            logger.warning("Stored status message %s was not found; creating a new one", message_id)
-            return None
+    ) -> list[discord.Message]:
+        if self.status_messages is None:
+            messages = []
+            for message_id in read_message_ids(self.settings.message_file):
+                try:
+                    messages.append(await channel.fetch_message(message_id))
+                except discord.NotFound:
+                    logger.warning("Stored status message %s was not found", message_id)
+            self.status_messages = messages
+        return self.status_messages
 
 
 def main() -> None:

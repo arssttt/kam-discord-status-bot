@@ -29,7 +29,7 @@ Right click on the desired channel Status -> Copy Channel ID
 docker compose up -d --build
 ```
 
-The bot stores the Discord message id in `./data/status-message.json`, so after restarts it edits the same message instead of posting a new one.
+The bot stores the Discord message id in `./data/status-message.json`, so after restarts it edits the same message instead of posting a new one. Rooms are split across messages at 6000 characters or 10 embeds per message. Extra messages are created as needed and deleted when fewer are needed; the first message is reused.
 
 ## Configuration
 
