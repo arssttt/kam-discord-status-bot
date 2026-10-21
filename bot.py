@@ -730,7 +730,7 @@ class StatusBot(discord.Client):
                     messages.pop(index)
                     write_message_ids(self.settings.message_file, [m.id for m in messages])
             else:
-                message = await channel.send(embeds=page)
+                message = await channel.send(embeds=page, silent=True)
                 messages.append(message)
                 write_message_ids(self.settings.message_file, [m.id for m in messages])
                 logger.info("Created status message %s", message.id)
