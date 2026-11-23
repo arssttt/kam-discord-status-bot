@@ -21,6 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger("kam-status-bot")
 
 EMBED_WIDTH_SPACER = "\u2800" * 42
+STATUS_MESSAGE_COUNT = 5
 SERVER_COLOR_TAG_RE = re.compile(r"\[\$[0-9a-fA-F]{6}\]")
 DISCORD_MARKDOWN_RE = re.compile(r"[\\*_~`|]")
 
@@ -721,21 +722,27 @@ class StatusBot(discord.Client):
 
         pages = split_embeds(embeds)
         messages = await self.get_status_messages(channel)
-        for index, page in enumerate(pages):
+        for index in range(STATUS_MESSAGE_COUNT):
+            page = pages[index] if index < len(pages) else []
+            content = None if page else "\u2800"
+            if index == STATUS_MESSAGE_COUNT - 1 and len(pages) > STATUS_MESSAGE_COUNT:
+                hidden_rooms = sum(len(extra_page) for extra_page in pages[STATUS_MESSAGE_COUNT:])
+                content = f"Additional rooms: {hidden_rooms} (display limit reached)"
+
             while index < len(messages):
                 try:
-                    await messages[index].edit(embeds=page, attachments=[])
+                    await messages[index].edit(content=content, embeds=page, attachments=[])
                     break
                 except discord.NotFound:
                     messages.pop(index)
                     write_message_ids(self.settings.message_file, [m.id for m in messages])
             else:
-                message = await channel.send(embeds=page, silent=True)
+                message = await channel.send(content=content, embeds=page, silent=True)
                 messages.append(message)
                 write_message_ids(self.settings.message_file, [m.id for m in messages])
                 logger.info("Created status message %s", message.id)
 
-        while len(messages) > len(pages):
+        while len(messages) > STATUS_MESSAGE_COUNT:
             try:
                 await messages[-1].delete()
             except discord.NotFound:
